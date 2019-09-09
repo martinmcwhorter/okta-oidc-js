@@ -46,6 +46,20 @@ export default class Auth {
     this.login = this.login.bind(this);
     this.logout = this.logout.bind(this);
     this.redirect = this.redirect.bind(this);
+
+    // Automatically enters login flow if token renew fails.
+    // The default behavior can be overriden by passing a function via config: `config.onTokenError` 
+    this.getTokenManager().on('error', this._config.onTokenError || this._onTokenError.bind(this));
+  }
+
+  _onTokenError(error) {
+    if (error.errorCode === 'login_required') {
+      this.login();
+    }
+  }
+
+  getTokenManager() {
+    return this._oktaAuth.tokenManager;
   }
 
   async handleAuthentication() {
@@ -61,8 +75,15 @@ export default class Auth {
   }
 
   async isAuthenticated() {
+    // Support a user-provided method to check authentication
+    if (this._config.isAuthenticated) {
+      return (this._config.isAuthenticated)();
+    }
+
     // If there could be tokens in the url
     if (location && location.hash && containsAuthTokens.test(location.hash)) return null;
+
+    // Return true if either the access or id token exist in client storage
     return !!(await this.getAccessToken()) || !!(await this.getIdToken());
   }
 
@@ -139,11 +160,7 @@ export default class Auth {
       || this._config.scopes
       || ['openid', 'email', 'profile'];
 
-    this._oktaAuth.token.getWithRedirect(params);
-
-    // return a promise that doesn't terminate so nothing
-    // happens after setting window.location
-    /* eslint-disable-next-line no-unused-vars */
-    return new Promise((resolve, reject) => {});
+    return this._oktaAuth.token.getWithRedirect(params);
   }
+
 }

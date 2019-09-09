@@ -1,8 +1,7 @@
 
 jest.mock('@okta/okta-auth-js');
 
-import { Router } from '@angular/router';
-import { TestBed, async, ComponentFixture } from '@angular/core/testing';
+import { TestBed } from '@angular/core/testing';
 import { RouterTestingModule } from '@angular/router/testing';
 import OktaAuth from '@okta/okta-auth-js';
 
@@ -11,7 +10,6 @@ import PACKAGE_JSON from '../../package.json';
 import {
   OktaAuthModule,
   OktaAuthService,
-  OKTA_CONFIG
 } from '../../src';
 
 const VALID_CONFIG = {
@@ -21,15 +19,38 @@ const VALID_CONFIG = {
 };
 
 describe('Angular service', () => {
+  let _mockAuthJS;
+
   beforeEach(() => {
     OktaAuth.mockClear();
+    _mockAuthJS = {
+      tokenManager: {
+        on: jest.fn()
+      }
+    };
   });
   afterEach(() => {
     jest.restoreAllMocks();
   });
-  
+
+  function extendMockAuthJS(mockAuthJS) {
+    mockAuthJS = mockAuthJS || {};
+    mockAuthJS.tokenManager = Object.assign({}, mockAuthJS.tokenManager, {
+      on: jest.fn()
+    });
+    mockAuthJS.token = Object.assign({}, mockAuthJS.token, {
+      getWithRedirect: jest.fn()
+    });
+    return mockAuthJS;
+  }
+
+  function extendConfig(config) {
+    return Object.assign({}, VALID_CONFIG, config);
+  }
+
   describe('configuration', () => {
     const createInstance = (params = {}) => {
+      OktaAuth.mockImplementation(() => _mockAuthJS);
       return () => new OktaAuthService(params, undefined);
     };
     it('should throw if no issuer is provided', () => {
@@ -87,7 +108,7 @@ describe('Angular service', () => {
     });
 
     it('will add "openid" scope if not present', () => {
-      var config = createInstance(VALID_CONFIG)().getOktaConfig();
+      const config = createInstance(VALID_CONFIG)().getOktaConfig();
         expect(config.scopes).toMatchInlineSnapshot(`
           Array [
             "openid",
@@ -97,7 +118,7 @@ describe('Angular service', () => {
   });
 
   it('Adds a user agent on internal oktaAuth instance', () => {
-    var service = new OktaAuthService(VALID_CONFIG, undefined);
+    const service = new OktaAuthService(VALID_CONFIG, undefined);
     expect(service['oktaAuth'].userAgent.indexOf(`@okta/okta-angular/${PACKAGE_JSON.version}`)).toBeGreaterThan(-1);
   });
 
@@ -125,23 +146,76 @@ describe('Angular service', () => {
   });
 
   describe('service methods', () => {
-    function createService(config=null) {
+    function createService(config = null, mockAuthJS = null) {
+      OktaAuth.mockImplementation(() => extendMockAuthJS(mockAuthJS));
+      config = extendConfig(config);
       TestBed.configureTestingModule({
         imports: [
           RouterTestingModule.withRoutes([{ path: 'foo', redirectTo: '/foo' }]),
-          OktaAuthModule.initAuth(config || VALID_CONFIG)
+          OktaAuthModule.initAuth(config)
         ],
         providers: [OktaAuthService],
       });
       return TestBed.get(OktaAuthService);
     }
 
+    describe('TokenManager', () => {
+      it('Exposes the token manager', () => {
+        const service = createService();
+        const val = service.getTokenManager();
+        expect(val).toBeTruthy();
+        expect(val).toBe(service.oktaAuth.tokenManager);
+      });
+
+      it('Listens to errors from token manager', () => {
+        jest.spyOn(OktaAuthService.prototype, '_onTokenError').mockReturnValue(null);
+        const service = createService();
+        const val = service.getTokenManager();
+        expect(val.on).toHaveBeenCalledWith('error', expect.any(Function));
+      });
+
+      it('_onTokenError: calls loginRedirect for error code "login_required"', () => {
+        jest.spyOn(OktaAuthService.prototype, 'loginRedirect').mockReturnValue(null);
+        const service = createService();
+        service._onTokenError({ errorCode: 'login_required'});
+        expect(OktaAuthService.prototype.loginRedirect).toHaveBeenCalled();
+      });
+
+      it('_onTokenError: ignores other errors', () => {
+        jest.spyOn(OktaAuthService.prototype, 'loginRedirect').mockReturnValue(null);
+        const service = createService();
+        service._onTokenError({ errorCode: 'something'});
+        expect(OktaAuthService.prototype.loginRedirect).not.toHaveBeenCalled();
+      });
+
+      it('Accepts custom function "onTokenError" via config', () => {
+        const onTokenError = jest.fn();
+        const error = { errorCode: 'some_error' };
+        const service = createService({ onTokenError });
+        const val = service.getTokenManager();
+        expect(val.on).toHaveBeenCalledWith('error', onTokenError);
+      });
+    });
+
     describe('isAuthenticated', () => {
+
+      it('Will call a custom function if "config.isAuthenticated" was set', async () => {
+        jest.spyOn(OktaAuthService.prototype, 'getAccessToken').mockReturnValue(Promise.resolve(null));
+        jest.spyOn(OktaAuthService.prototype, 'getIdToken').mockReturnValue(Promise.resolve(null));
+
+        const isAuthenticated = jest.fn().mockReturnValue(Promise.resolve('foo'));
+        const service = createService({ isAuthenticated });
+        const ret = await service.isAuthenticated();
+        expect(ret).toBe('foo');
+        expect(isAuthenticated).toHaveBeenCalled();
+        expect(OktaAuthService.prototype.getAccessToken).not.toHaveBeenCalled();
+        expect(OktaAuthService.prototype.getIdToken).not.toHaveBeenCalled();
+      });
 
       it('returns false if no access or id token', async () => {
         jest.spyOn(OktaAuthService.prototype, 'getAccessToken').mockReturnValue(Promise.resolve(null));
         jest.spyOn(OktaAuthService.prototype, 'getIdToken').mockReturnValue(Promise.resolve(null));
-        
+
         const service = createService();
         const val = await service.isAuthenticated();
         expect(val).toBe(false);
@@ -151,16 +225,16 @@ describe('Angular service', () => {
       it('returns true if access token', async () => {
         jest.spyOn(OktaAuthService.prototype, 'getAccessToken').mockReturnValue(Promise.resolve('something'));
         jest.spyOn(OktaAuthService.prototype, 'getIdToken').mockReturnValue(Promise.resolve(null));
-        
+
         const service = createService();
         const val = await service.isAuthenticated();
         expect(val).toBe(true);
       });
-      
+
       it('returns true if id token', async () => {
         jest.spyOn(OktaAuthService.prototype, 'getAccessToken').mockReturnValue(Promise.resolve(null));
         jest.spyOn(OktaAuthService.prototype, 'getIdToken').mockReturnValue(Promise.resolve('something'));
-        
+
         const service = createService();
         const val = await service.isAuthenticated();
         expect(val).toBe(true);
@@ -172,36 +246,31 @@ describe('Angular service', () => {
         const mockToken = {
           accessToken: 'foo'
         };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           tokenManager: {
             get: jest.fn().mockImplementation(key => {
               expect(key).toBe('accessToken');
               return Promise.resolve(mockToken);
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-        
-        const service = createService();
+        });
+
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getAccessToken();
         expect(retVal).toBe(mockToken.accessToken);
       });
 
       it('catches exceptions', async () => {
-        const mockToken = {
-          accessToken: 'foo'
-        };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           tokenManager: {
             get: jest.fn().mockImplementation(key => {
               expect(key).toBe('accessToken');
               throw new Error('expected test error');
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-        
-        const service = createService();
+        });
+
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getAccessToken();
         expect(retVal).toBe(undefined);
       });
@@ -212,36 +281,29 @@ describe('Angular service', () => {
         const mockToken = {
           idToken: 'foo'
         };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           tokenManager: {
             get: jest.fn().mockImplementation(key => {
               expect(key).toBe('idToken');
               return Promise.resolve(mockToken);
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-        
-        const service = createService();
+        });
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getIdToken();
         expect(retVal).toBe(mockToken.idToken);
       });
 
       it('catches exceptions', async () => {
-        const mockToken = {
-          idToken: 'foo'
-        };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           tokenManager: {
             get: jest.fn().mockImplementation(key => {
               expect(key).toBe('idToken');
               throw new Error('expected test error');
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-        
-        const service = createService();
+        });
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getIdToken();
         expect(retVal).toBe(undefined);
       });
@@ -249,16 +311,14 @@ describe('Angular service', () => {
 
     describe('getUser', () => {
       it('neither id nor access token = returns undefined', async () => {
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           tokenManager: {
             get: jest.fn().mockImplementation(key => {
               return Promise.resolve(null);
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-
-        const service = createService();
+        });
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getUser();
         expect(retVal).toBe(undefined);
       });
@@ -269,7 +329,7 @@ describe('Angular service', () => {
           idToken: 'foo',
           claims: 'baz',
         };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           tokenManager: {
             get: jest.fn().mockImplementation(key => {
               if (key === 'idToken') {
@@ -278,10 +338,9 @@ describe('Angular service', () => {
               return Promise.resolve(null);
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
+        });
 
-        const service = createService();
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getUser();
         expect(retVal).toBe(mockToken.claims);
       });
@@ -295,7 +354,7 @@ describe('Angular service', () => {
         const userInfo = {
           sub: 'test-sub',
         };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           token: {
             getUserInfo: jest.fn().mockReturnValue(Promise.resolve(userInfo)),
           },
@@ -307,10 +366,9 @@ describe('Angular service', () => {
               return Promise.resolve(null);
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
+        });
 
-        const service = createService();
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getUser();
         expect(retVal).toBe(userInfo);
       });
@@ -324,7 +382,7 @@ describe('Angular service', () => {
         const userInfo = {
           sub: 'test-sub-other',
         };
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           token: {
             getUserInfo: jest.fn().mockReturnValue(Promise.resolve(userInfo)),
           },
@@ -336,10 +394,9 @@ describe('Angular service', () => {
               return Promise.resolve(null);
             })
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
+        });
 
-        const service = createService();
+        const service = createService(null, mockAuthJS);
         const retVal = await service.getUser();
         expect(mockAuthJS.token.getUserInfo).toHaveBeenCalled();
         expect(retVal).toBe(mockToken.claims);
@@ -376,14 +433,7 @@ describe('Angular service', () => {
     });
 
     describe('loginRedirect', () => {
-      beforeEach(() => {
-        const mockAuthJS = {
-          token: {
-            getWithRedirect: jest.fn()
-          },
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-      })
+
       it('Saves the "referrerPath" in localStorage', async () => {
         localStorage.setItem('referrerPath', '');
         expect(localStorage.getItem('referrerPath')).toBe('');
@@ -425,7 +475,7 @@ describe('Angular service', () => {
           scopes: ['foo', 'bar', 'openid'],
           responseType: ['unknown'],
         }
-        const service = createService(Object.assign({}, VALID_CONFIG, params));
+        const service = createService(extendConfig(params));
         const uri = 'https://foo.random';
 
         await service.loginRedirect(uri);
@@ -438,7 +488,7 @@ describe('Angular service', () => {
           scopes: ['foo', 'bar', 'openid'],
           responseType: ['unknown'],
         }
-        const service = createService(Object.assign({}, VALID_CONFIG, params1));
+        const service = createService(extendConfig(params1));
         const uri = 'https://foo.random';
         const params2 = {
           scopes: ['something', 'different'],
@@ -456,16 +506,15 @@ describe('Angular service', () => {
       beforeEach(() => {
         tokens = [];
         isAuthenticated = false;
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           token: {
             parseFromUrl: jest.fn().mockImplementation(() => tokens)
           },
           tokenManager: {
             add: jest.fn()
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-        service = createService();
+        });
+        service = createService(null, mockAuthJS);
         jest.spyOn(service, 'isAuthenticated').mockImplementation(() => Promise.resolve(isAuthenticated));
         jest.spyOn(service.router, 'navigate').mockReturnValue(null);
         jest.spyOn(service, 'emitAuthenticationState');
@@ -480,12 +529,12 @@ describe('Angular service', () => {
         const accessToken = { accessToken: 'foo' };
         const idToken = { idToken: 'bar' };
         tokens = [accessToken, idToken];
-  
+
         await service.handleAuthentication();
         expect(service.oktaAuth.tokenManager.add).toHaveBeenNthCalledWith(1, 'accessToken', accessToken);
         expect(service.oktaAuth.tokenManager.add).toHaveBeenNthCalledWith(2, 'idToken', idToken);
       });
-      
+
       it('isAuthenticated (false): does not authenticated state', async () => {
         isAuthenticated = false;
         await service.handleAuthentication();
@@ -502,21 +551,20 @@ describe('Angular service', () => {
         const uri = 'https://fake.test.foo';
         service.setFromUri(uri);
         await service.handleAuthentication();
-        expect(service.router.navigate).toHaveBeenCalledWith([uri], { queryParams: undefined })
+        expect(service.router.navigate).toHaveBeenCalledWith([uri], { queryParams: undefined });
       });
     });
 
     describe('logout', () => {
       let service;
       beforeEach(() => {
-        const mockAuthJS = {
+        const mockAuthJS = extendMockAuthJS({
           signOut: jest.fn(),
           tokenManager: {
             clear: jest.fn(),
           }
-        };
-        OktaAuth.mockImplementation(() => mockAuthJS);
-        service = createService();
+        });
+        service = createService(null, mockAuthJS);
         jest.spyOn(service.router, 'navigate').mockReturnValue(null);
         jest.spyOn(service, 'emitAuthenticationState');
       });

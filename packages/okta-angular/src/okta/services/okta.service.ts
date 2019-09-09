@@ -29,6 +29,7 @@ import packageInfo from '../packageInfo';
  */
 import OktaAuth from '@okta/okta-auth-js';
 import { Observable, Observer } from 'rxjs';
+import { TokenManager } from '../models/token-manager';
 
 @Injectable()
 export class OktaAuthService {
@@ -60,12 +61,32 @@ export class OktaAuthService {
       this.oktaAuth = new OktaAuth(this.config);
       this.oktaAuth.userAgent = `${packageInfo.name}/${packageInfo.version} ${this.oktaAuth.userAgent}`;
       this.$authenticationState = new Observable((observer: Observer<boolean>) => { this.observers.push(observer); });
+
+      // Automatically enters login flow if token renew fails.
+      // The default behavior can be overriden by passing a function via config: `config.onTokenError`
+      this.getTokenManager().on('error', this.config.onTokenError || this._onTokenError.bind(this));
+    }
+
+    // Handle token manager errors: Default implementation
+    _onTokenError(error) {
+      if (error.errorCode === 'login_required') {
+        this.loginRedirect();
+      }
+    }
+
+    getTokenManager(): TokenManager {
+      return this.oktaAuth.tokenManager;
     }
 
     /**
      * Checks if there is an access token and id token
      */
     async isAuthenticated(): Promise<boolean> {
+      // Support a user-provided method to check authentication
+      if (this.config.isAuthenticated) {
+        return (this.config.isAuthenticated)();
+      }
+
       const accessToken = await this.getAccessToken();
       const idToken = await this.getIdToken();
       return !!(accessToken || idToken);

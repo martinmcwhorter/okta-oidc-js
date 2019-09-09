@@ -1,9 +1,20 @@
 import { createLocalVue } from '@vue/test-utils'
 import { default as Auth } from '../../src/Auth'
+import AuthJS from '@okta/okta-auth-js'
 
 jest.mock('@okta/okta-auth-js')
 
 describe('Auth configuration', () => {
+  beforeEach(() => {
+    AuthJS.mockImplementation(() => {
+      return {
+        tokenManager: {
+          on: jest.fn()
+        }
+      }
+    })
+  })
+
   it('does not throw if config is valid', () => {
     const validConfig = {
       issuer: 'https://foo',
