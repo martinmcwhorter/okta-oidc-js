@@ -26,8 +26,8 @@ export default withAuth(class Home extends Component {
     this.checkAuthentication = this.checkAuthentication.bind(this);
     this.login = this.login.bind(this);
     this.logout = this.logout.bind(this);
-    this.renew_idToken = this.renewToken.bind(this, 'idToken');
-    this.renew_accessToken = this.renewToken.bind(this, 'accessToken');
+    this.renewIdToken = this.renewToken.bind(this, 'idToken');
+    this.renewAccessToken = this.renewToken.bind(this, 'accessToken');
   }
 
   async checkAuthentication() {
@@ -87,8 +87,8 @@ export default withAuth(class Home extends Component {
         <Link to='/protected'>Protected</Link><br/>
         <Link to='/sessionToken-login'>Session Token Login</Link><br/>
         {button}
-        { this.state.authenticated ? <button id="renew-id-token-button" onClick={this.renew_idToken}>Renew ID Token</button> : null }
-        { this.state.authenticated ? <button id="renew-access-token-button" onClick={this.renew_accessToken}>Renew Access Token</button> : null }
+        { this.state.authenticated ? <button id="renew-id-token-button" onClick={this.renewIdToken}>Renew ID Token</button> : null }
+        { this.state.authenticated ? <button id="renew-access-token-button" onClick={this.renewAccessToken}>Renew Access Token</button> : null }
         <div id="renew-message">
           { this.state.renewMessage }
         </div>

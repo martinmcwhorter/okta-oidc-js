@@ -1,28 +1,32 @@
 import Auth from '../../src/Auth';
 import AuthJS from '@okta/okta-auth-js'
 import OAuthError from '@okta/okta-auth-js/lib/errors/OAuthError';
-import tokens from '../support/tokens';
 
-const { standardAccessTokenParsed, standardIdTokenParsed } = tokens;
 const pkg = require('../../package.json');
 
 jest.mock('@okta/okta-auth-js');
 
-
-
 describe('Auth component', () => {
   let mockAuthJsInstance;
   let mockAuthJsInstanceWithError;
+  let accessTokenParsed;
+  let idTokenParsed;
 
   beforeEach(() => {
+    accessTokenParsed = {
+      accessToken: 'i am a fake access token'
+    };
+    idTokenParsed = {
+      idToken: 'i am a fake id token'
+    };
     mockAuthJsInstance = {
       userAgent: 'okta-auth-js',
       tokenManager: {
         get: jest.fn().mockImplementation(tokenName => {
           if (tokenName === 'idToken') {
-            return Promise.resolve(standardIdTokenParsed);
+            return Promise.resolve(idTokenParsed);
           } else if (tokenName === 'accessToken') {
-            return Promise.resolve(standardAccessTokenParsed);
+            return Promise.resolve(accessTokenParsed);
           } else {
             throw new Error('Unknown token name: ' + tokenName);
           }
@@ -97,7 +101,7 @@ describe('Auth component', () => {
 
   it('should throw if no issuer is provided', () => {
     function createInstance () {
-      return new Auth();
+      return new Auth({});
     }
     expect(createInstance).toThrow()
   });
@@ -245,7 +249,7 @@ describe('Auth component', () => {
       redirect_uri: 'foo'
     });
     const accessToken = await auth.getAccessToken();
-    expect(accessToken).toBe(standardAccessTokenParsed.accessToken);
+    expect(accessToken).toBe(accessTokenParsed.accessToken);
     done();
   });
   test('builds the authorize request with correct params', () => {
@@ -419,8 +423,8 @@ describe('Auth component', () => {
         clientId: 'foo',
         redirectUri: 'https://foo/redirect',
       });
-      jest.spyOn(auth, 'getAccessToken').mockReturnValue(Promise.resolve(standardAccessTokenParsed));
-      jest.spyOn(auth, 'getIdToken').mockReturnValue(Promise.resolve(standardIdTokenParsed));
+      jest.spyOn(auth, 'getAccessToken').mockReturnValue(Promise.resolve(accessTokenParsed));
+      jest.spyOn(auth, 'getIdToken').mockReturnValue(Promise.resolve(idTokenParsed));
 
       const ret = await auth.isAuthenticated();
       expect(ret).toBe(true);
@@ -432,12 +436,11 @@ describe('Auth component', () => {
         clientId: 'foo',
         redirectUri: 'https://foo/redirect',
       });
-      jest.spyOn(auth, 'getAccessToken').mockReturnValue(Promise.resolve(standardAccessTokenParsed));
+      jest.spyOn(auth, 'getAccessToken').mockReturnValue(Promise.resolve(accessTokenParsed));
       jest.spyOn(auth, 'getIdToken').mockReturnValue(Promise.resolve(null));
 
       const ret = await auth.isAuthenticated();
       expect(ret).toBe(true);
-
       expect(auth.getAccessToken).toHaveBeenCalled();
     });
 
@@ -448,7 +451,7 @@ describe('Auth component', () => {
         redirectUri: 'https://foo/redirect',
       });
       jest.spyOn(auth, 'getAccessToken').mockReturnValue(Promise.resolve(null));
-      jest.spyOn(auth, 'getIdToken').mockReturnValue(Promise.resolve(standardIdTokenParsed));
+      jest.spyOn(auth, 'getIdToken').mockReturnValue(Promise.resolve(idTokenParsed));
 
       const ret = await auth.isAuthenticated();
       expect(ret).toBe(true);
